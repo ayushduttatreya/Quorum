@@ -1,0 +1,14 @@
+{
+  "name": "@quorum/chaos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "chaos:eviction": "tsx src/leader-eviction.ts",
+    "chaos:partition": "tsx src/replica-partition.ts",
+    "chaos:corruption": "tsx src/snapshot-corruption.ts",
+    "chaos:epoch": "tsx src/split-epoch.ts"
+  },
+  "dependencies": { "@quorum/sdk": "*", "@quorum/types": "*" },
+  "devDependencies": { "tsx": "^4.0.0", "typescript": "*" }
+}

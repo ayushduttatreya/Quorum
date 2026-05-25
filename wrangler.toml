@@ -1,0 +1,20 @@
+name = "quorum-runtime"
+main = "packages/runtime/src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "COORDINATION_RUNTIME"
+class_name = "CoordinationRuntimeDO"
+
+[[durable_objects.bindings]]
+name = "REPLICA"
+class_name = "ReplicaDO"
+
+[[r2_buckets]]
+binding = "QUORUM_STORAGE"
+bucket_name = "quorum-coordination"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CoordinationRuntimeDO", "ReplicaDO"]

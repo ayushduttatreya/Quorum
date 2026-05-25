@@ -1,0 +1,22 @@
+{
+  "name": "@quorum/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@quorum/types": "*",
+    "@quorum/protocol": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.5.0",
+    "@cloudflare/workers-types": "^4.0.0",
+    "vitest": "^1.6.0",
+    "wrangler": "^3.60.0",
+    "typescript": "*"
+  }
+}

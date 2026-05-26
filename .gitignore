@@ -66,3 +66,5 @@ package-lock.json
 # Temp
 tmp/
 temp/
+docs/
+

@@ -11,8 +11,14 @@ out/
 
 # Cloudflare / Wrangler
 .wrangler/
+.miniflare/
 .dev.vars
 *.vars
+
+# SQLite artifacts (local Miniflare / wrangler dev state)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 
 # Environment & secrets
 .env
@@ -53,6 +59,9 @@ coverage/
 
 # Chaos test reports (generated)
 chaos-tests/reports/
+
+# Lock files (not committed in this repo)
+package-lock.json
 
 # Temp
 tmp/

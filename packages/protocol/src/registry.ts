@@ -1,5 +1,5 @@
-import type { ProtocolExecutor } from "./types.ts";
-import type { LogEntryInput, CommittedEntry } from "@quorum/types";
+import type { ProtocolExecutor, ValidationResult } from "./types.ts";
+import type { LogEntryInput, CommittedEntry, SnapshotSlice } from "@quorum/types";
 
 export class ProtocolRegistry {
   private readonly executors = new Map<string, ProtocolExecutor>();
@@ -14,19 +14,31 @@ export class ProtocolRegistry {
     return executor;
   }
 
-  validate(input: LogEntryInput, currentState: Record<string, unknown>): import("./types.ts").ValidationResult {
-    throw new Error("not implemented");
+  validate(input: LogEntryInput, currentState: Record<string, unknown>): ValidationResult {
+    const executor = this.getExecutor(input.protocol);
+    const state = currentState[input.protocol] ?? executor.initialState();
+    return executor.validate(input, state);
   }
 
   apply(entry: CommittedEntry, currentState: Record<string, unknown>): Record<string, unknown> {
-    throw new Error("not implemented");
+    const executor = this.getExecutor(entry.protocol);
+    const state = currentState[entry.protocol] ?? executor.initialState();
+    return { ...currentState, [entry.protocol]: executor.apply(entry, state) };
   }
 
-  serializeAllSnapshots(states: Record<string, unknown>): import("@quorum/types").SnapshotSlice[] {
-    throw new Error("not implemented");
+  serializeAllSnapshots(states: Record<string, unknown>): SnapshotSlice[] {
+    return [...this.executors.entries()].map(([_protocol, executor]) =>
+      executor.serializeSnapshot(states[executor.protocol] ?? executor.initialState()),
+    );
   }
 
-  restoreAllSnapshots(slices: import("@quorum/types").SnapshotSlice[], protocolVersions: Record<string, number>): Record<string, unknown> {
-    throw new Error("not implemented");
+  restoreAllSnapshots(slices: SnapshotSlice[], protocolVersions: Record<string, number>): Record<string, unknown> {
+    const states: Record<string, unknown> = {};
+    for (const slice of slices) {
+      const executor = this.getExecutor(slice.protocol);
+      const version = protocolVersions[slice.protocol] ?? slice.version;
+      states[slice.protocol] = executor.restoreSnapshot(slice, version);
+    }
+    return states;
   }
 }

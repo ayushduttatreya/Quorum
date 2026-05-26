@@ -1,33 +1,66 @@
-import type { LogEntry, CommittedEntry } from "@quorum/types";
+import type { CommittedEntry } from "@quorum/types";
+import type { RclEngine } from "../rcl/rcl-engine.ts";
+import type { ProtocolRegistry } from "@quorum/protocol";
 
-interface ReplayOptions {
+export interface ReplayOptions {
   fromSeq: number;
   toSeq?: number;
-  dryRun?: boolean;
-  namespaceId: string;
+  initialState?: Record<string, unknown>;
 }
 
-interface ReplayResult {
+export interface ReplayResult {
   entriesReplayed: number;
   finalSeq: number;
   materializedState: Record<string, unknown>;
-  diverged: boolean;
 }
 
 export class ReplayEngine {
-  async replay(opts: ReplayOptions): Promise<ReplayResult> {
-    throw new Error("not implemented");
+  constructor(
+    private readonly rclEngine: RclEngine,
+    private readonly protocolRegistry: ProtocolRegistry,
+  ) {}
+
+  replay(opts: ReplayOptions): ReplayResult {
+    let states = opts.initialState ? { ...opts.initialState } : {};
+    let cursor = opts.fromSeq;
+    let entriesReplayed = 0;
+    let finalSeq = opts.fromSeq > 0 ? opts.fromSeq - 1 : 0;
+    const toSeq = opts.toSeq ?? Number.MAX_SAFE_INTEGER;
+
+    while (cursor <= toSeq) {
+      const batch = this.rclEngine.getEntries({ fromSeq: cursor, limit: 500 });
+      if (batch.length === 0) break;
+
+      for (const entry of batch) {
+        if (entry.seq > toSeq) break;
+        if (!entry.committed) continue;
+        states = this.protocolRegistry.apply(entry as CommittedEntry, states);
+        entriesReplayed++;
+        finalSeq = entry.seq;
+      }
+
+      cursor = (batch[batch.length - 1]?.seq ?? cursor) + 1;
+      if (batch.length < 500) break;
+    }
+
+    return { entriesReplayed, finalSeq, materializedState: states };
   }
 
-  async verifyDeterminism(namespaceId: string, fromSeq: number): Promise<boolean> {
-    throw new Error("not implemented");
-  }
-
-  async reconstructTimeline(
-    namespaceId: string,
+  verifyDeterminism(
     fromSeq: number,
-    toSeq: number,
-  ): Promise<CommittedEntry[]> {
-    throw new Error("not implemented");
+    baseState: Record<string, unknown>,
+    expectedState: Record<string, unknown>,
+  ): boolean {
+    const result = this.replay({ fromSeq, initialState: baseState });
+    const serialize = (v: unknown) =>
+      JSON.stringify(v, (_k, val) => (typeof val === "bigint" ? val.toString() : val));
+    return serialize(result.materializedState) === serialize(expectedState);
+  }
+
+  reconstructTimeline(fromSeq: number, toSeq: number): CommittedEntry[] {
+    if (toSeq < fromSeq) return [];
+    return this.rclEngine
+      .getEntries({ fromSeq, limit: toSeq - fromSeq + 1 })
+      .filter((e) => e.committed) as CommittedEntry[];
   }
 }

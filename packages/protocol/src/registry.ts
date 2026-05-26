@@ -14,6 +14,10 @@ export class ProtocolRegistry {
     return executor;
   }
 
+  hasExecutor(protocol: string): boolean {
+    return this.executors.has(protocol);
+  }
+
   validate(input: LogEntryInput, currentState: Record<string, unknown>): ValidationResult {
     const executor = this.getExecutor(input.protocol);
     const state = currentState[input.protocol] ?? executor.initialState();

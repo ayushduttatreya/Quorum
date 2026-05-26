@@ -34,6 +34,9 @@ export class ReplayEngine {
       for (const entry of batch) {
         if (entry.seq > toSeq) break;
         if (!entry.committed) continue;
+        // Skip SYSTEM entries (SNAPSHOT_COMPLETE, ENTRY_ROLLBACK, etc.) —
+        // they are coordination metadata, not protocol state machine transitions.
+        if (!this.protocolRegistry.hasExecutor(entry.protocol)) continue;
         states = this.protocolRegistry.apply(entry as CommittedEntry, states);
         entriesReplayed++;
         finalSeq = entry.seq;

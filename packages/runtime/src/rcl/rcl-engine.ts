@@ -147,6 +147,13 @@ export class RclEngine {
     return (row?.["max_seq"] as number | null) ?? 0;
   }
 
+  getLatestCommittedSeq(): number {
+    const [row] = this.sql
+      .exec("SELECT MAX(seq) as max_seq FROM log_entries WHERE committed = 1")
+      .toArray();
+    return (row?.["max_seq"] as number | null) ?? 0;
+  }
+
   getLatestChecksum(): string {
     const [row] = this.sql
       .exec("SELECT checksum FROM log_entries ORDER BY seq DESC LIMIT 1")

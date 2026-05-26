@@ -7,6 +7,7 @@ import { SnapshotManager } from "./snapshot/snapshot-manager.ts";
 import { ReplayEngine } from "./replay/replay-engine.ts";
 import { FailureDetector } from "./failure/failure-detector.ts";
 import { ProtocolRegistry } from "@quorum/protocol";
+import type { LogEntry, Outcome } from "@quorum/types";
 
 type RuntimeMode = "RECOVERING" | "ACTIVE";
 
@@ -40,6 +41,31 @@ export class CoordinationRuntimeDO {
 
   async getTopology(): Promise<Record<string, unknown>> {
     throw new Error("not implemented");
+  }
+
+  // Test helpers — expose RclEngine operations via DO methods so tests can
+  // call them through runInDurableObject without crossing the I/O boundary.
+  rclInitialize(): void {
+    if (!this.rclEngine) {
+      this.rclEngine = new RclEngine(this.state.storage.sql);
+    }
+    this.rclEngine.initialize();
+  }
+
+  rclAppend(input: LogEntryInput, term: number, epoch: number): LogEntry {
+    return this.rclEngine.append({ input, term, epoch });
+  }
+
+  rclMarkCommitted(seq: number, outcome: Outcome): void {
+    this.rclEngine.markCommitted(seq, outcome);
+  }
+
+  rclGetEntries(fromSeq: number, limit: number): LogEntry[] {
+    return this.rclEngine.getEntries({ fromSeq, limit });
+  }
+
+  rclGetUncommitted(): LogEntry[] {
+    return this.rclEngine.getUncommitted();
   }
 
   private async recover(): Promise<void> {

@@ -6,7 +6,7 @@ import type {
   LogEntry,
 } from "@quorum/types";
 
-interface ReplicaStub {
+export interface ReplicaStub {
   appendEntries(req: AppendEntriesRequest): Promise<AppendEntriesResponse>;
 }
 

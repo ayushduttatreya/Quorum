@@ -1,0 +1,24 @@
+{
+  "name": "@quorum/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "quorum": "./dist/quorum.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@quorum/protocol": "*",
+    "@quorum/types": "*",
+    "minimist": "^1.2.8"
+  },
+  "devDependencies": {
+    "@types/minimist": "^1.2.5",
+    "typescript": "*",
+    "vitest": "^2.1.0"
+  }
+}

@@ -5,10 +5,11 @@ import { CommitCoordinator } from "./commit/commit-coordinator.ts";
 import { ReplicationManager } from "./replication/replication-manager.ts";
 import { FailureDetector } from "./failure/failure-detector.ts";
 import { ProtocolRegistry, LockProtocol } from "@quorum/protocol";
-import type { CommittedEntry, LogEntry, Outcome, Snapshot, SnapshotMetadata } from "@quorum/types";
 import { ReplayEngine } from "./replay/replay-engine.ts";
-import type { ReplayOptions, ReplayResult } from "./replay/replay-engine.ts";
 import { SnapshotManager } from "./snapshot/snapshot-manager.ts";
+import type { CommittedEntry, LogEntry, Outcome, Snapshot, SnapshotMetadata } from "@quorum/types";
+import type { ReplicaStub } from "./replication/replication-manager.ts";
+import type { ReplayOptions, ReplayResult } from "./replay/replay-engine.ts";
 
 type RuntimeMode = "RECOVERING" | "ACTIVE";
 
@@ -19,6 +20,8 @@ export class CoordinationRuntimeDO {
   private replicationManager!: ReplicationManager;
   private failureDetector!: FailureDetector;
   private protocolRegistry!: ProtocolRegistry;
+  private replayEngine!: ReplayEngine;
+  private snapshotManager!: SnapshotManager;
   private protocolStates: Record<string, unknown> = {};
   private readonly term = 1;
   private readonly epoch = 1;
@@ -30,12 +33,15 @@ export class CoordinationRuntimeDO {
   ) {}
 
   async initialize(): Promise<void> {
-    if (this.rclEngine) return;
+    if (this.mode === "ACTIVE") return;
     await this.state.blockConcurrencyWhile(async () => {
-      if (this.rclEngine) return;
+      if (this.mode === "ACTIVE") return;
 
-      this.rclEngine = new RclEngine(this.state.storage.sql);
-      this.rclEngine.initialize();
+      // 1. Bootstrap subsystems
+      if (!this.rclEngine) {
+        this.rclEngine = new RclEngine(this.state.storage.sql);
+        this.rclEngine.initialize();
+      }
 
       this.commitCoordinator = new CommitCoordinator({
         replicaCount: 2,
@@ -52,8 +58,8 @@ export class CoordinationRuntimeDO {
         },
       });
 
-      const r1 = this.env.REPLICA.get(this.env.REPLICA.idFromName("replica-1")) as unknown as import("./replication/replication-manager.ts").ReplicaStub;
-      const r2 = this.env.REPLICA.get(this.env.REPLICA.idFromName("replica-2")) as unknown as import("./replication/replication-manager.ts").ReplicaStub;
+      const r1 = this.env.REPLICA.get(this.env.REPLICA.idFromName("replica-1")) as unknown as ReplicaStub;
+      const r2 = this.env.REPLICA.get(this.env.REPLICA.idFromName("replica-2")) as unknown as ReplicaStub;
       this.replicationManager.registerReplica("replica-1", r1);
       this.replicationManager.registerReplica("replica-2", r2);
 
@@ -63,16 +69,121 @@ export class CoordinationRuntimeDO {
       this.failureDetector = new FailureDetector();
       this.failureDetector.onFailure((event) => {
         if (event.type === "REPLICA_UNRESPONSIVE") {
-          // health tracked — quorum adjustment deferred to Phase 1C
+          // health tracked — quorum adjustment deferred to Phase 1C-ii
         }
       });
 
+      // 2. Wire recovery subsystems
+      this.replayEngine = new ReplayEngine(this.rclEngine, this.protocolRegistry);
+      this.snapshotManager = new SnapshotManager({
+        namespaceId: "default",
+        r2Bucket: this.env.QUORUM_STORAGE,
+        threshold: 50_000,
+        rclEngine: this.rclEngine,
+        replicationManager: this.replicationManager,
+      });
+
+      // 3. Load latest snapshot (if any)
+      const snapshot = await this.snapshotManager.loadLatestSnapshot();
+      let replayFromSeq: number;
+      if (snapshot) {
+        this.protocolStates = this.protocolRegistry.restoreAllSnapshots(
+          snapshot.slices,
+          snapshot.protocolVersions,
+        );
+        replayFromSeq = snapshot.seq + 1;
+        this.commitIndex = snapshot.seq;
+      } else {
+        this.protocolStates = {};
+        replayFromSeq = 0;
+      }
+
+      // 4. Replay delta from snapshot to HEAD
+      const replayResult = this.replayEngine.replay({
+        fromSeq: replayFromSeq,
+        initialState: this.protocolStates,
+      });
+      this.protocolStates = replayResult.materializedState;
+      // Advance commitIndex to the true latest committed seq — replay only
+      // advances it for entries with registered executors, but SYSTEM entries
+      // (SNAPSHOT_COMPLETE, ENTRY_ROLLBACK) are also committed and count.
+      const latestCommittedSeq = this.rclEngine.getLatestCommittedSeq();
+      if (latestCommittedSeq > this.commitIndex) {
+        this.commitIndex = latestCommittedSeq;
+      }
+
+      // 5. Handle uncommitted entries
+      const uncommitted = this.rclEngine.getUncommitted();
+      for (const entry of uncommitted) {
+        if (entry.epoch < this.epoch) {
+          // Stale epoch — record and discard
+          const rb = this.rclEngine.append({
+            input: {
+              protocol: "SYSTEM",
+              protocolVersion: 1,
+              operation: "ENTRY_STALE_EPOCH_DISCARDED",
+              resourceKey: "system",
+              payload: {
+                staleTerm: entry.term,
+                currentTerm: this.term,
+                discardedSeq: entry.seq,
+              },
+              idempotencyKey: `stale-discard-${entry.seq}`,
+              traceId: "recovery",
+              clientId: "kernel",
+            },
+            term: this.term,
+            epoch: this.epoch,
+          });
+          this.rclEngine.markCommitted(entry.seq, "REJECTED");
+          this.rclEngine.markCommitted(rb.seq, "COMMITTED");
+          if (rb.seq > this.commitIndex) this.commitIndex = rb.seq;
+        } else {
+          // Valid epoch — attempt re-replication
+          const prevEntries =
+            entry.seq > 1
+              ? this.rclEngine.getEntries({ fromSeq: entry.seq - 1, limit: 1 })
+              : [];
+          const prevChecksum = prevEntries[0]?.checksum ?? "";
+          await this.replicationManager.replicate({
+            entries: [entry],
+            leaderEpoch: this.epoch,
+            prevSeq: entry.seq - 1,
+            prevChecksum,
+          });
+          // If quorum was achieved, onCommit already fired — check if still uncommitted
+          const stillUncommitted = this.rclEngine
+            .getUncommitted()
+            .some((e) => e.seq === entry.seq);
+          if (stillUncommitted) {
+            const rb = this.rclEngine.append({
+              input: {
+                protocol: "SYSTEM",
+                protocolVersion: 1,
+                operation: "ENTRY_ROLLBACK",
+                resourceKey: "system",
+                payload: { rolledBackSeq: entry.seq, reason: "QUORUM_UNAVAILABLE" },
+                idempotencyKey: `rollback-${entry.seq}`,
+                traceId: "recovery",
+                clientId: "kernel",
+              },
+              term: this.term,
+              epoch: this.epoch,
+            });
+            this.rclEngine.markCommitted(entry.seq, "REJECTED");
+            this.rclEngine.markCommitted(rb.seq, "COMMITTED");
+            if (rb.seq > this.commitIndex) this.commitIndex = rb.seq;
+          }
+        }
+      }
+
+      // 6. Transition to ACTIVE
       this.mode = "ACTIVE";
     });
   }
 
   async coordinate(input: LogEntryInput): Promise<CommittedEntry> {
-    if (!this.rclEngine) await this.initialize();
+    if (this.mode !== "ACTIVE") await this.initialize();
     if (this.mode === "RECOVERING") throw new RecoveringError();
 
     const entry = this.rclEngine.append({ input, term: this.term, epoch: this.epoch });
@@ -85,7 +196,8 @@ export class CoordinationRuntimeDO {
     }
 
     const prevSeq = entry.seq - 1;
-    const prevEntries = prevSeq > 0 ? this.rclEngine.getEntries({ fromSeq: prevSeq, limit: 1 }) : [];
+    const prevEntries =
+      prevSeq > 0 ? this.rclEngine.getEntries({ fromSeq: prevSeq, limit: 1 }) : [];
     const prevChecksum = prevEntries[0]?.checksum ?? "";
     await this.replicationManager.replicate({
       entries: [entry],
@@ -109,11 +221,20 @@ export class CoordinationRuntimeDO {
       this.protocolStates,
     );
 
+    // Trigger snapshot if threshold reached
+    await this.snapshotManager.maybeSnapshot(
+      entry.seq,
+      this.protocolStates,
+      this.protocolRegistry,
+      this.term,
+      this.epoch,
+    );
+
     return { ...entry, committed: true, outcome: "COMMITTED" };
   }
 
   async fetch(request: Request): Promise<Response> {
-    if (!this.rclEngine) await this.initialize();
+    if (this.mode !== "ACTIVE") await this.initialize();
     const url = new URL(request.url);
 
     if (request.method === "POST" && url.pathname === "/coordinate") {
@@ -133,7 +254,7 @@ export class CoordinationRuntimeDO {
   }
 
   async getTopology(): Promise<Record<string, unknown>> {
-    if (!this.rclEngine) await this.initialize();
+    if (this.mode !== "ACTIVE") await this.initialize();
     return {
       mode: this.mode,
       commitIndex: this.commitIndex,
@@ -165,7 +286,7 @@ export class CoordinationRuntimeDO {
     return this.rclEngine.getUncommitted();
   }
 
-  // ── Phase 1B replay test helpers ────────────────────────────────────────────
+  // ── Phase 1C-i replay test helpers ───────────────────────────────────────
   replayMakeEngine(): ReplayEngine {
     const registry = new ProtocolRegistry();
     registry.register(new LockProtocol());
@@ -194,7 +315,7 @@ export class CoordinationRuntimeDO {
     return this.replayMakeEngine().verifyDeterminism(fromSeq, baseState, expectedState);
   }
 
-  // ── Phase 1C snapshot test helpers ─────────────────────────────────────────
+  // ── Phase 1C-i snapshot test helpers ─────────────────────────────────────
   private snapshotMakeManager(threshold = 50): SnapshotManager {
     const repl = new ReplicationManager({ namespaceId: "test-snap", onAck: () => {} });
     return new SnapshotManager({
@@ -242,13 +363,11 @@ export class CoordinationRuntimeDO {
   }
 
   snapshotApplyEntry(entry: CommittedEntry, states: Record<string, unknown>): Record<string, unknown> {
-    const registry = this.snapshotMakeRegistry();
-    return registry.apply(entry, states);
+    return this.snapshotMakeRegistry().apply(entry, states);
   }
 
   snapshotRestoreAll(slices: Snapshot["slices"], protocolVersions: Record<string, number>): Record<string, unknown> {
-    const registry = this.snapshotMakeRegistry();
-    return registry.restoreAllSnapshots(slices, protocolVersions);
+    return this.snapshotMakeRegistry().restoreAllSnapshots(slices, protocolVersions);
   }
 }
 

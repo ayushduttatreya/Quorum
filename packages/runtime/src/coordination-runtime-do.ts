@@ -5,9 +5,10 @@ import { CommitCoordinator } from "./commit/commit-coordinator.ts";
 import { ReplicationManager } from "./replication/replication-manager.ts";
 import { FailureDetector } from "./failure/failure-detector.ts";
 import { ProtocolRegistry, LockProtocol } from "@quorum/protocol";
-import type { CommittedEntry, LogEntry, Outcome } from "@quorum/types";
+import type { CommittedEntry, LogEntry, Outcome, Snapshot, SnapshotMetadata } from "@quorum/types";
 import { ReplayEngine } from "./replay/replay-engine.ts";
 import type { ReplayOptions, ReplayResult } from "./replay/replay-engine.ts";
+import { SnapshotManager } from "./snapshot/snapshot-manager.ts";
 
 type RuntimeMode = "RECOVERING" | "ACTIVE";
 
@@ -191,6 +192,63 @@ export class CoordinationRuntimeDO {
     expectedState: Record<string, unknown>,
   ): boolean {
     return this.replayMakeEngine().verifyDeterminism(fromSeq, baseState, expectedState);
+  }
+
+  // ── Phase 1C snapshot test helpers ─────────────────────────────────────────
+  private snapshotMakeManager(threshold = 50): SnapshotManager {
+    const repl = new ReplicationManager({ namespaceId: "test-snap", onAck: () => {} });
+    return new SnapshotManager({
+      namespaceId: "test",
+      r2Bucket: this.env.QUORUM_STORAGE,
+      threshold,
+      rclEngine: this.rclEngine,
+      replicationManager: repl,
+    });
+  }
+
+  snapshotMakeRegistry(): ProtocolRegistry {
+    const registry = new ProtocolRegistry();
+    registry.register(new LockProtocol());
+    return registry;
+  }
+
+  async snapshotTake(
+    commitSeq: number,
+    protocolStates: Record<string, unknown>,
+    term: number,
+    epoch: number,
+  ): Promise<SnapshotMetadata> {
+    const registry = this.snapshotMakeRegistry();
+    return this.snapshotMakeManager().takeSnapshot(commitSeq, protocolStates, registry, term, epoch);
+  }
+
+  async snapshotMaybe(
+    currentSeq: number,
+    protocolStates: Record<string, unknown>,
+    term: number,
+    epoch: number,
+    threshold: number,
+  ): Promise<boolean> {
+    const registry = this.snapshotMakeRegistry();
+    return this.snapshotMakeManager(threshold).maybeSnapshot(currentSeq, protocolStates, registry, term, epoch);
+  }
+
+  async snapshotLoadLatest(): Promise<Snapshot | null> {
+    return this.snapshotMakeManager().loadLatestSnapshot();
+  }
+
+  async snapshotVerify(metadata: SnapshotMetadata): Promise<boolean> {
+    return this.snapshotMakeManager().verifySnapshot(metadata);
+  }
+
+  snapshotApplyEntry(entry: CommittedEntry, states: Record<string, unknown>): Record<string, unknown> {
+    const registry = this.snapshotMakeRegistry();
+    return registry.apply(entry, states);
+  }
+
+  snapshotRestoreAll(slices: Snapshot["slices"], protocolVersions: Record<string, number>): Record<string, unknown> {
+    const registry = this.snapshotMakeRegistry();
+    return registry.restoreAllSnapshots(slices, protocolVersions);
   }
 }
 

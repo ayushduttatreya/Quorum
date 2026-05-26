@@ -892,11 +892,11 @@ Infrastructure systems earn trust by being honest about limitations. These are r
 ### Phase 1 — Coordination Kernel (in progress)
 
 - [x] System design specification
-- [ ] Monorepo scaffold (Turborepo + Workers)
-- [ ] RCL Engine (SQLite append-only log)
-- [ ] Commit Coordinator (quorum ACK tracking)
-- [ ] ReplicaDO (deterministic replication peer)
-- [ ] Replication Manager (fan-out, health, gap-fill)
+- [x] Monorepo scaffold (Turborepo + Workers)
+- [x] RCL Engine (SQLite append-only log)
+- [x] Commit Coordinator (quorum ACK tracking)
+- [x] ReplicaDO (deterministic replication peer)
+- [x] Replication Manager (fan-out, health, gap-fill)
 - [ ] Lock Protocol executor
 - [ ] CoordinationRuntimeDO assembly
 - [ ] Replay Engine
@@ -955,7 +955,7 @@ Infrastructure systems earn trust by being honest about limitations. These are r
 | Document | Description |
 |---|---|
 | [System Design Specification](./docs/superpowers/specs/2026-05-25-quorum-design.md) | Full architecture doc — protocols, consistency model, recovery semantics, correctness properties, security, cost characteristics |
-| [Phase 1A Implementation Plan](./docs/superpowers/plans/2026-05-25-phase1a-rcl-replication.md) | Step-by-step TDD implementation plan for RCL Engine + Replication |
+| [Phase 1A Implementation Plan](./docs/superpowers/plans/2026-05-25-phase1a-rcl-replication.md) | Step-by-step TDD implementation plan for RCL Engine + Replication — **complete, 17/17 tests passing** |
 | `docs/rfcs/` | Request for Comments — in-progress design proposals |
 | `docs/adrs/` | Architecture Decision Records — rationale for key decisions |
 

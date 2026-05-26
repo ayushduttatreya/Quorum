@@ -6,6 +6,8 @@ import { ReplicationManager } from "./replication/replication-manager.ts";
 import { FailureDetector } from "./failure/failure-detector.ts";
 import { ProtocolRegistry, LockProtocol } from "@quorum/protocol";
 import type { CommittedEntry, LogEntry, Outcome } from "@quorum/types";
+import { ReplayEngine } from "./replay/replay-engine.ts";
+import type { ReplayOptions, ReplayResult } from "./replay/replay-engine.ts";
 
 type RuntimeMode = "RECOVERING" | "ACTIVE";
 
@@ -160,6 +162,35 @@ export class CoordinationRuntimeDO {
 
   rclGetUncommitted(): LogEntry[] {
     return this.rclEngine.getUncommitted();
+  }
+
+  // ── Phase 1B replay test helpers ────────────────────────────────────────────
+  replayMakeEngine(): ReplayEngine {
+    const registry = new ProtocolRegistry();
+    registry.register(new LockProtocol());
+    return new ReplayEngine(this.rclEngine, registry);
+  }
+
+  replayRun(opts: ReplayOptions): ReplayResult {
+    return this.replayMakeEngine().replay(opts);
+  }
+
+  replayApplyEntry(entry: CommittedEntry, states: Record<string, unknown>): Record<string, unknown> {
+    const registry = new ProtocolRegistry();
+    registry.register(new LockProtocol());
+    return registry.apply(entry, states);
+  }
+
+  replayReconstructTimeline(fromSeq: number, toSeq: number): CommittedEntry[] {
+    return this.replayMakeEngine().reconstructTimeline(fromSeq, toSeq);
+  }
+
+  replayVerifyDeterminism(
+    fromSeq: number,
+    baseState: Record<string, unknown>,
+    expectedState: Record<string, unknown>,
+  ): boolean {
+    return this.replayMakeEngine().verifyDeterminism(fromSeq, baseState, expectedState);
   }
 }
 

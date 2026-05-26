@@ -56,4 +56,30 @@ describe("CoordinationRuntimeDO", () => {
       expect(body.commitIndex).toBeGreaterThanOrEqual(1);
     });
   });
+
+  it("GET /entries returns committed entries as JSON array", async () => {
+    const stub = env.COORDINATION_RUNTIME.get(
+      env.COORDINATION_RUNTIME.idFromName("coord-entries-test"),
+    );
+    await runInDurableObject(stub, async (instance) => {
+      const do_ = instance as unknown as CoordinationRuntimeDO;
+      await do_.coordinate(makeLockAcquire("entries-res", "idem-entries-1"));
+      const res = await do_.fetch(new Request("http://x/entries?fromSeq=0&limit=10"));
+      const entries = await res.json() as unknown[];
+      expect(Array.isArray(entries)).toBe(true);
+      expect(entries.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("GET /snapshot returns null when no snapshot exists", async () => {
+    const stub = env.COORDINATION_RUNTIME.get(
+      env.COORDINATION_RUNTIME.idFromName("coord-snapshot-test"),
+    );
+    await runInDurableObject(stub, async (instance) => {
+      const do_ = instance as unknown as CoordinationRuntimeDO;
+      const res = await do_.fetch(new Request("http://x/snapshot"));
+      const snap = await res.json();
+      expect(snap).toBeNull();
+    });
+  });
 });

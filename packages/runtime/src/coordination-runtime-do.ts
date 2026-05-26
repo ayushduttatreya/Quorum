@@ -250,6 +250,18 @@ export class CoordinationRuntimeDO {
       });
     }
 
+    if (request.method === "GET" && url.pathname === "/entries") {
+      const fromSeq = parseInt(url.searchParams.get("fromSeq") ?? "0", 10);
+      const limit = parseInt(url.searchParams.get("limit") ?? "1000", 10);
+      const entries = this.rclEngine.getEntries({ fromSeq, limit });
+      return Response.json(entries);
+    }
+
+    if (request.method === "GET" && url.pathname === "/snapshot") {
+      const snapshot = await this.snapshotManager.loadLatestSnapshot();
+      return Response.json(snapshot);
+    }
+
     return new Response("Not Found", { status: 404 });
   }
 

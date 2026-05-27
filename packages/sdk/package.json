@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@quorum/types": "*"
+    "@quorum/types": "*",
+    "@quorum/protocol": "*"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.5.0",

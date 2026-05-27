@@ -14,13 +14,13 @@ export interface DeterminismCheckOptions {
   url: string;
 }
 
-function buildRegistry(): ProtocolRegistry {
+export function buildRegistry(): ProtocolRegistry {
   const registry = new ProtocolRegistry();
   registry.register(new LockProtocol());
   return registry;
 }
 
-function serializeState(state: Record<string, unknown>): string {
+export function serializeState(state: Record<string, unknown>): string {
   return JSON.stringify(state, (_k, v) =>
     typeof v === "bigint" ? v.toString() : v,
   );

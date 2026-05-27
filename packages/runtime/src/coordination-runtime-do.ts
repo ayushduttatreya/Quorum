@@ -4,9 +4,10 @@ import { RclEngine } from "./rcl/rcl-engine.ts";
 import { CommitCoordinator } from "./commit/commit-coordinator.ts";
 import { ReplicationManager } from "./replication/replication-manager.ts";
 import { FailureDetector } from "./failure/failure-detector.ts";
-import { ProtocolRegistry, LockProtocol } from "@quorum/protocol";
+import { ProtocolRegistry, LockProtocol, LeaseProtocol, ElectionProtocol } from "@quorum/protocol";
 import { ReplayEngine } from "./replay/replay-engine.ts";
 import { SnapshotManager } from "./snapshot/snapshot-manager.ts";
+import { RclSubscriber, MetricsMaterializer, TraceEmitter } from "@quorum/observability";
 import type { CommittedEntry, LogEntry, Outcome, Snapshot, SnapshotMetadata } from "@quorum/types";
 import type { ReplicaStub } from "./replication/replication-manager.ts";
 import type { ReplayOptions, ReplayResult } from "./replay/replay-engine.ts";
@@ -22,6 +23,9 @@ export class CoordinationRuntimeDO {
   private protocolRegistry!: ProtocolRegistry;
   private replayEngine!: ReplayEngine;
   private snapshotManager!: SnapshotManager;
+  private rclSubscriber!: RclSubscriber;
+  private metricsMaterializer!: MetricsMaterializer;
+  private traceEmitter!: TraceEmitter;
   private protocolStates: Record<string, unknown> = {};
   private readonly term = 1;
   private readonly epoch = 1;
@@ -65,6 +69,8 @@ export class CoordinationRuntimeDO {
 
       this.protocolRegistry = new ProtocolRegistry();
       this.protocolRegistry.register(new LockProtocol());
+      this.protocolRegistry.register(new LeaseProtocol());
+      this.protocolRegistry.register(new ElectionProtocol());
 
       this.failureDetector = new FailureDetector();
       this.failureDetector.onFailure((event) => {
@@ -179,6 +185,12 @@ export class CoordinationRuntimeDO {
 
       // 6. Transition to ACTIVE
       this.mode = "ACTIVE";
+
+      // 7. Start observability pipeline (after ACTIVE — non-blocking)
+      this.rclSubscriber = new RclSubscriber(this.rclEngine, { pollIntervalMs: 500 });
+      this.metricsMaterializer = new MetricsMaterializer(this.rclSubscriber);
+      this.traceEmitter = new TraceEmitter(this.rclSubscriber);
+      this.rclSubscriber.start();
     });
   }
 
@@ -262,6 +274,41 @@ export class CoordinationRuntimeDO {
       return Response.json(snapshot);
     }
 
+    if (request.method === "GET" && url.pathname === "/topology") {
+      return Response.json(await this.getTopology());
+    }
+
+    if (request.method === "GET" && url.pathname === "/snapshots") {
+      return Response.json(await this.snapshotManager.listSnapshots());
+    }
+
+    const verifyMatch = /^\/snapshots\/(\d+)\/verify$/.exec(url.pathname);
+    if (request.method === "GET" && verifyMatch) {
+      const seq = parseInt(verifyMatch[1]!, 10);
+      const snapshots = await this.snapshotManager.listSnapshots();
+      const meta = snapshots.find((s) => s.seq === seq);
+      if (!meta) {
+        return Response.json({ passed: false, checksum: "", seq, error: "NOT_FOUND" }, { status: 404 });
+      }
+      const passed = await this.snapshotManager.verifySnapshot(meta);
+      return Response.json({ passed, checksum: meta.checksum, seq });
+    }
+
+    if (request.method === "POST" && url.pathname === "/recover") {
+      this.mode = "RECOVERING";
+      await this.initialize();
+      return Response.json({ mode: this.mode });
+    }
+
+    if (request.method === "GET" && url.pathname === "/metrics") {
+      return Response.json(this.metricsMaterializer?.getMetrics() ?? {});
+    }
+
+    if (request.method === "GET" && url.pathname === "/traces") {
+      const limit = parseInt(url.searchParams.get("limit") ?? "100", 10);
+      return Response.json(this.traceEmitter?.getRecentSpans(limit) ?? []);
+    }
+
     return new Response("Not Found", { status: 404 });
   }
 
@@ -302,6 +349,8 @@ export class CoordinationRuntimeDO {
   replayMakeEngine(): ReplayEngine {
     const registry = new ProtocolRegistry();
     registry.register(new LockProtocol());
+    registry.register(new LeaseProtocol());
+    registry.register(new ElectionProtocol());
     return new ReplayEngine(this.rclEngine, registry);
   }
 
@@ -342,6 +391,8 @@ export class CoordinationRuntimeDO {
   snapshotMakeRegistry(): ProtocolRegistry {
     const registry = new ProtocolRegistry();
     registry.register(new LockProtocol());
+    registry.register(new LeaseProtocol());
+    registry.register(new ElectionProtocol());
     return registry;
   }
 
@@ -380,6 +431,11 @@ export class CoordinationRuntimeDO {
 
   snapshotRestoreAll(slices: Snapshot["slices"], protocolVersions: Record<string, number>): Record<string, unknown> {
     return this.snapshotMakeRegistry().restoreAllSnapshots(slices, protocolVersions);
+  }
+
+  // ── Phase 2D observability test helper ────────────────────────────────────
+  observabilityFlush(): void {
+    this.rclSubscriber?.poll?.();
   }
 }
 

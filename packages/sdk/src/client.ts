@@ -3,13 +3,14 @@ import type {
   LeaseOptions,
   ElectionOptions,
   WorkflowOptions,
+  WorkflowContext,
   LockHandle,
   LeaseHandle,
   ElectionHandle,
 } from "./types.ts";
 import type { CommittedEntry } from "@quorum/types";
 import { QuorumError } from "@quorum/types";
-import { LeaseProtocol, ElectionProtocol } from "@quorum/protocol";
+import { LeaseProtocol, ElectionProtocol, WorkflowProtocol } from "@quorum/protocol";
 
 interface Env {
   COORDINATION_RUNTIME: DurableObjectNamespace;
@@ -276,11 +277,114 @@ export class Quorum {
     };
   }
 
-  async workflow(
-    _workflowId: string,
-    _opts: WorkflowOptions,
-  ): Promise<Record<string, unknown>> {
-    throw new Error("not implemented — Phase 2");
+  async workflow(workflowId: string, opts: WorkflowOptions): Promise<Record<string, unknown>> {
+    const stub = this.getRuntimeStub("default");
+    const maxRetries = opts.maxRetries ?? 3;
+
+    const stepIds = Object.keys(opts.steps);
+    const dagEdges: Record<string, string[]> = {};
+    for (const stepId of stepIds) {
+      dagEdges[stepId] = opts.parallelism?.[stepId] ?? [];
+    }
+
+    const post = async (operation: string, payload: Record<string, unknown>): Promise<CommittedEntry> => {
+      const key = crypto.randomUUID();
+      const r = await stub.fetch("http://do/coordinate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          protocol: "WORKFLOW", protocolVersion: 1, operation,
+          resourceKey: workflowId, payload,
+          idempotencyKey: key, traceId: key, clientId: "sdk",
+        }),
+      });
+      return r.json() as Promise<CommittedEntry>;
+    };
+
+    const proto = new WorkflowProtocol();
+    const applyEntry = (entry: CommittedEntry, state: ReturnType<WorkflowProtocol["initialState"]>) =>
+      proto.apply(entry, state);
+
+    const startResult = await post("WORKFLOW_STARTED", { workflowId, dagEdges, stepIds });
+    if (startResult.outcome === "REJECTED") {
+      throw new QuorumError("WORKFLOW_EXISTS", `Workflow "${workflowId}" already exists`);
+    }
+
+    let localState = proto.initialState();
+    localState = applyEntry({ ...startResult, outcome: "COMMITTED" } as CommittedEntry, localState);
+
+    const results: Record<string, unknown> = {};
+
+    while (true) {
+      const ready = WorkflowProtocol.getReadySteps(workflowId, localState);
+      if (ready.length === 0) {
+        const wf = localState.workflows[workflowId]!;
+        const allComplete = Object.values(wf.steps).every((s) => s.status === "complete");
+        if (allComplete) break;
+        throw new QuorumError("WORKFLOW_DEADLOCK", `Workflow "${workflowId}" has no ready steps but is not complete`);
+      }
+
+      for (const stepId of ready) {
+        const schedResult = await post("STEP_SCHEDULED", { stepId });
+        const execResult = await post("STEP_EXECUTING", { stepId });
+        localState = applyEntry({ ...schedResult, outcome: "COMMITTED" } as CommittedEntry, localState);
+        localState = applyEntry({ ...execResult, outcome: "COMMITTED" } as CommittedEntry, localState);
+
+        const currentAttempt = localState.workflows[workflowId]!.steps[stepId]!.attempt;
+        const ctx: WorkflowContext = { input: {}, results: { ...results }, attempt: currentAttempt };
+
+        let succeeded = false;
+        let lastError: unknown;
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            results[stepId] = await opts.steps[stepId]!(ctx);
+            succeeded = true;
+            break;
+          } catch (err) {
+            lastError = err;
+            if (attempt < maxRetries) {
+              const retryResult = await post("STEP_RETRY", { stepId });
+              const schedRetry = await post("STEP_SCHEDULED", { stepId });
+              const execRetry = await post("STEP_EXECUTING", { stepId });
+              localState = applyEntry({ ...retryResult, outcome: "COMMITTED" } as CommittedEntry, localState);
+              localState = applyEntry({ ...schedRetry, outcome: "COMMITTED" } as CommittedEntry, localState);
+              localState = applyEntry({ ...execRetry, outcome: "COMMITTED" } as CommittedEntry, localState);
+              const backoff = WorkflowProtocol.computeBackoff(100, attempt, "default", workflowId);
+              await new Promise<void>((r) => setTimeout(r, backoff));
+              ctx.attempt = localState.workflows[workflowId]!.steps[stepId]!.attempt;
+            }
+          }
+        }
+
+        if (!succeeded) {
+          const failReason = String(lastError);
+          const failResult = await post("WORKFLOW_FAILED", { reason: failReason });
+          localState = applyEntry({ ...failResult, outcome: "COMMITTED" } as CommittedEntry, localState);
+
+          const wfState = localState.workflows[workflowId]!;
+          const completedSteps = Object.entries(wfState.steps)
+            .filter(([, s]) => s.status === "complete")
+            .sort(([, a], [, b]) => (b.completedSeq ?? 0) - (a.completedSeq ?? 0));
+
+          for (const [csId] of completedSteps) {
+            const compResult = await post("STEP_COMPENSATE", { stepId: csId });
+            localState = applyEntry({ ...compResult, outcome: "COMMITTED" } as CommittedEntry, localState);
+          }
+
+          const finalFail = await post("WORKFLOW_FAILED", { reason: failReason });
+          localState = applyEntry({ ...finalFail, outcome: "COMMITTED" } as CommittedEntry, localState);
+
+          throw new QuorumError("WORKFLOW_FAILED", `Workflow "${workflowId}" failed: ${failReason}`);
+        }
+
+        const completeResult = await post("STEP_COMPLETE", { stepId });
+        localState = applyEntry({ ...completeResult, outcome: "COMMITTED" } as CommittedEntry, localState);
+      }
+    }
+
+    await post("WORKFLOW_COMPLETE", {});
+    return { results };
   }
 
   async subscribe(_opts: {

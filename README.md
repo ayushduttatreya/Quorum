@@ -796,9 +796,20 @@ Benchmark classes:
 | Snapshot compaction (50k entries) | < 2s | — | wall time + write pause |
 | Replay cold-start (10k entries) | < 300ms | — | snapshot load + delta replay |
 
-Run benchmarks against a deployed namespace:
+Run benchmarks against a running Wrangler dev server:
 ```bash
-quorum dev benchmark --namespace payments --ops 1000 --output results/
+# Start the runtime first
+wrangler dev
+
+# Run all benchmarks (in a second terminal)
+cd benchmarks && BASE_URL=http://localhost:8787 OPS=500 npm run bench:all
+
+# Run individual benchmarks
+npm run bench:lock       # lock acquisition p50/p95/p99/p999
+npm run bench:quorum     # quorum commit latency
+npm run bench:replication  # replica lag at 1k/5k/10k ops/min
+
+# Results saved to benchmarks/results/YYYY-MM-DD-*.json
 ```
 
 ---
@@ -913,7 +924,7 @@ Infrastructure systems earn trust by being honest about limitations. These are r
 - [x] Full CLI (`quorum dev`, `quorum ops`)
 - [x] Observability pipeline (metrics, OTEL tracing)
 - [x] Security model (namespace tokens, encryption)
-- [ ] Benchmark harness + initial results
+- [x] Benchmark harness + initial results
 
 ### Phase 3 — Operational Excellence
 

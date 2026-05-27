@@ -93,8 +93,13 @@ export class CoordinationRuntimeDO {
         replicationManager: this.replicationManager,
       });
 
-      // 3. Load latest snapshot (if any)
-      const snapshot = await this.snapshotManager.loadLatestSnapshot();
+      // 3. Load latest snapshot (if any) — fall back to full replay on corruption
+      let snapshot = null;
+      try {
+        snapshot = await this.snapshotManager.loadLatestSnapshot();
+      } catch {
+        // Snapshot corrupt or unreadable — proceed with full log replay from seq 0
+      }
       let replayFromSeq: number;
       if (snapshot) {
         this.protocolStates = this.protocolRegistry.restoreAllSnapshots(

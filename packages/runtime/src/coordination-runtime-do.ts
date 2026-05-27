@@ -4,13 +4,15 @@ import { RclEngine } from "./rcl/rcl-engine.ts";
 import { CommitCoordinator } from "./commit/commit-coordinator.ts";
 import { ReplicationManager } from "./replication/replication-manager.ts";
 import { FailureDetector } from "./failure/failure-detector.ts";
-import { ProtocolRegistry, LockProtocol, LeaseProtocol, ElectionProtocol } from "@quorum/protocol";
+import { ProtocolRegistry, LockProtocol, LeaseProtocol, ElectionProtocol, WorkflowProtocol } from "@quorum/protocol";
 import { ReplayEngine } from "./replay/replay-engine.ts";
 import { SnapshotManager } from "./snapshot/snapshot-manager.ts";
 import { RclSubscriber, MetricsMaterializer, TraceEmitter } from "@quorum/observability";
 import type { CommittedEntry, LogEntry, Outcome, Snapshot, SnapshotMetadata } from "@quorum/types";
 import type { ReplicaStub } from "./replication/replication-manager.ts";
 import type { ReplayOptions, ReplayResult } from "./replay/replay-engine.ts";
+import { TokenValidator } from "./auth/token-validator.ts";
+import type { NamespaceToken } from "@quorum/types";
 
 type RuntimeMode = "RECOVERING" | "ACTIVE";
 
@@ -30,6 +32,7 @@ export class CoordinationRuntimeDO {
   private readonly term = 1;
   private readonly epoch = 1;
   private commitIndex = 0;
+  private tokenValidator: TokenValidator | null = null;
 
   constructor(
     private readonly state: DurableObjectState,
@@ -71,6 +74,7 @@ export class CoordinationRuntimeDO {
       this.protocolRegistry.register(new LockProtocol());
       this.protocolRegistry.register(new LeaseProtocol());
       this.protocolRegistry.register(new ElectionProtocol());
+      this.protocolRegistry.register(new WorkflowProtocol());
 
       this.failureDetector = new FailureDetector();
       this.failureDetector.onFailure((event) => {
@@ -191,6 +195,10 @@ export class CoordinationRuntimeDO {
       this.metricsMaterializer = new MetricsMaterializer(this.rclSubscriber);
       this.traceEmitter = new TraceEmitter(this.rclSubscriber);
       this.rclSubscriber.start();
+
+      if (this.env.AUTH_SECRET) {
+        this.tokenValidator = new TokenValidator(this.env.AUTH_SECRET);
+      }
     });
   }
 
@@ -248,6 +256,27 @@ export class CoordinationRuntimeDO {
   async fetch(request: Request): Promise<Response> {
     if (this.mode !== "ACTIVE") await this.initialize();
     const url = new URL(request.url);
+
+    // ── Auth guard ──────────────────────────────────────────────────────────
+    if (this.tokenValidator !== null && url.pathname !== "/auth/token") {
+      const authHeader = request.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return Response.json({ error: "UNAUTHORIZED" }, { status: 401 });
+      }
+      let token: NamespaceToken;
+      try {
+        token = JSON.parse(atob(authHeader.slice(7))) as NamespaceToken;
+      } catch {
+        return Response.json({ error: "UNAUTHORIZED" }, { status: 401 });
+      }
+      const ok = await this.tokenValidator.validate(
+        token,
+        deriveRequiredPermission(request.method, url.pathname),
+      );
+      if (!ok) {
+        return Response.json({ error: "UNAUTHORIZED" }, { status: 401 });
+      }
+    }
 
     if (request.method === "POST" && url.pathname === "/coordinate") {
       const input = await request.json() as LogEntryInput;
@@ -309,6 +338,23 @@ export class CoordinationRuntimeDO {
       return Response.json(this.traceEmitter?.getRecentSpans(limit) ?? []);
     }
 
+    if (request.method === "POST" && url.pathname === "/auth/token") {
+      const adminSecret = request.headers.get("X-Admin-Secret");
+      if (!adminSecret || adminSecret !== this.env.AUTH_SECRET) {
+        return Response.json({ error: "UNAUTHORIZED" }, { status: 401 });
+      }
+      if (!this.tokenValidator) {
+        return Response.json({ error: "AUTH_NOT_CONFIGURED" }, { status: 503 });
+      }
+      const body = (await request.json()) as {
+        namespaceId: string;
+        permissions: ("read" | "write" | "admin")[];
+        ttlMs: number;
+      };
+      const token = await this.tokenValidator.sign(body.namespaceId, body.permissions, body.ttlMs);
+      return Response.json({ token });
+    }
+
     return new Response("Not Found", { status: 404 });
   }
 
@@ -351,6 +397,7 @@ export class CoordinationRuntimeDO {
     registry.register(new LockProtocol());
     registry.register(new LeaseProtocol());
     registry.register(new ElectionProtocol());
+    registry.register(new WorkflowProtocol());
     return new ReplayEngine(this.rclEngine, registry);
   }
 
@@ -393,6 +440,7 @@ export class CoordinationRuntimeDO {
     registry.register(new LockProtocol());
     registry.register(new LeaseProtocol());
     registry.register(new ElectionProtocol());
+    registry.register(new WorkflowProtocol());
     return registry;
   }
 
@@ -437,9 +485,25 @@ export class CoordinationRuntimeDO {
   observabilityFlush(): void {
     this.rclSubscriber?.poll?.();
   }
+
+  // ── Phase 2E auth test helper ─────────────────────────────────────────────
+  setTokenValidatorForTest(secret: string): void {
+    this.tokenValidator = new TokenValidator(secret);
+  }
 }
 
 interface Env {
   REPLICA: DurableObjectNamespace;
   QUORUM_STORAGE: R2Bucket;
+  AUTH_SECRET?: string;
+}
+
+function deriveRequiredPermission(
+  method: string,
+  pathname: string,
+): "read" | "write" | "admin" {
+  if (method === "DELETE") return "admin";
+  if (method === "POST" && pathname === "/recover") return "admin";
+  if (method === "POST") return "write";
+  return "read";
 }

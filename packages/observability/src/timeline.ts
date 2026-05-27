@@ -1,25 +1,23 @@
 import type { CommittedEntry } from "@quorum/types";
 
-export interface TimelineEvent {
+export interface TimelineEntry {
   seq: number;
   wallClockTs: number;
   protocol: string;
   operation: string;
   resourceKey: string;
   outcome: string;
-  metadata: Record<string, unknown>;
+  clientId: string;
 }
 
-export class TimelineBuilder {
-  buildTimeline(entries: CommittedEntry[]): TimelineEvent[] {
-    throw new Error("not implemented");
-  }
-
-  filterByProtocol(events: TimelineEvent[], protocols: string[]): TimelineEvent[] {
-    throw new Error("not implemented");
-  }
-
-  filterByResource(events: TimelineEvent[], resourceKey: string): TimelineEvent[] {
-    throw new Error("not implemented");
-  }
+export function buildTimeline(entries: CommittedEntry[]): TimelineEntry[] {
+  return entries.map((entry) => ({
+    seq: entry.seq,
+    wallClockTs: entry.wallClockTs,
+    protocol: entry.protocol,
+    operation: entry.operation,
+    resourceKey: entry.resourceKey,
+    outcome: entry.outcome,
+    clientId: entry.clientId,
+  }));
 }

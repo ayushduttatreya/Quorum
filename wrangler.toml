@@ -19,5 +19,18 @@ bucket_name = "quorum-coordination"
 tag = "v1"
 new_sqlite_classes = ["CoordinationRuntimeDO", "ReplicaDO"]
 
+[[durable_objects.bindings]]
+name = "NAMESPACE_ROUTER"
+class_name = "NamespaceRouterDO"
+
+[[durable_objects.bindings]]
+name = "COORDINATION_RUNTIME_0"
+class_name = "CoordinationRuntimeDO"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["NamespaceRouterDO"]
+
 [vars]
 AUTH_SECRET = ""
+GROUP_COUNT = "1"

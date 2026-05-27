@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@quorum/types": "*",
-    "@quorum/protocol": "*"
+    "@quorum/protocol": "*",
+    "@quorum/observability": "*"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.5.0",

@@ -14,12 +14,26 @@ import { LeaseProtocol, ElectionProtocol, WorkflowProtocol } from "@quorum/proto
 
 interface Env {
   COORDINATION_RUNTIME: DurableObjectNamespace;
+  COORDINATION_RUNTIME_0?: DurableObjectNamespace;
+  COORDINATION_RUNTIME_1?: DurableObjectNamespace;
+  COORDINATION_RUNTIME_2?: DurableObjectNamespace;
+  NAMESPACE_ROUTER?: DurableObjectNamespace;
   REPLICA: DurableObjectNamespace;
   QUORUM_STORAGE: R2Bucket;
+  AUTH_SECRET?: string;
+}
+
+interface QuorumOptions {
+  namespaceId?: string;
 }
 
 export class Quorum {
-  constructor(private readonly env: Env) {}
+  private cachedStub: DurableObjectStub | null = null;
+
+  constructor(
+    private readonly env: Env,
+    private readonly opts: QuorumOptions = {},
+  ) {}
 
   async lock<T>(
     resourceKey: string,
@@ -31,7 +45,7 @@ export class Quorum {
     const cb: (token: bigint) => Promise<T> =
       typeof callbackOrOptions === "function" ? callbackOrOptions : callback!;
 
-    const stub = this.getRuntimeStub("default");
+    const stub = await this.getRuntimeStub();
     const idempotencyKey = crypto.randomUUID();
     const ttl = opts.ttl ?? 30_000;
 
@@ -91,7 +105,7 @@ export class Quorum {
     resourceKey: string,
     opts?: LockOptions,
   ): Promise<LockHandle> {
-    const stub = this.getRuntimeStub("default");
+    const stub = await this.getRuntimeStub();
     const idempotencyKey = crypto.randomUUID();
     const ttl = opts?.ttl ?? 30_000;
 
@@ -147,7 +161,7 @@ export class Quorum {
   }
 
   async lease(resourceKey: string, opts: LeaseOptions): Promise<LeaseHandle> {
-    const stub = this.getRuntimeStub("default");
+    const stub = await this.getRuntimeStub();
     const ttl = opts.ttl;
     const idempotencyKey = crypto.randomUUID();
 
@@ -223,7 +237,7 @@ export class Quorum {
   ): Promise<ElectionHandle> {
     const { candidateId, onElected, onDeposed } = opts;
     // Each election group uses its own DO instance for isolation
-    const stub = this.getRuntimeStub(groupKey);
+    const stub = await this.getRuntimeStub(groupKey);
 
     const post = async (operation: string, payload: Record<string, unknown>): Promise<CommittedEntry> => {
       const key = crypto.randomUUID();
@@ -278,7 +292,7 @@ export class Quorum {
   }
 
   async workflow(workflowId: string, opts: WorkflowOptions): Promise<Record<string, unknown>> {
-    const stub = this.getRuntimeStub("default");
+    const stub = await this.getRuntimeStub();
     const maxRetries = opts.maxRetries ?? 3;
 
     const stepIds = Object.keys(opts.steps);
@@ -397,8 +411,37 @@ export class Quorum {
     throw new Error("not implemented — Phase 2");
   }
 
-  private getRuntimeStub(_namespaceId: string): DurableObjectStub {
-    const id = this.env.COORDINATION_RUNTIME.idFromName(_namespaceId);
-    return this.env.COORDINATION_RUNTIME.get(id);
+  private async getRuntimeStub(nameOverride?: string): Promise<DurableObjectStub> {
+    // When a nameOverride is supplied (e.g. election groupKey), skip cache and
+    // resolve a dedicated DO instance for that key.
+    if (nameOverride !== undefined) {
+      const ns = this.env.COORDINATION_RUNTIME;
+      return ns.get(ns.idFromName(nameOverride));
+    }
+
+    if (this.cachedStub) return this.cachedStub;
+
+    const namespaceId = this.opts.namespaceId ?? "default";
+
+    if (this.env.NAMESPACE_ROUTER) {
+      const routerId = this.env.NAMESPACE_ROUTER.idFromName("global-router");
+      const router = this.env.NAMESPACE_ROUTER.get(routerId);
+      const res = await router.fetch(
+        `http://router/route?namespaceId=${encodeURIComponent(namespaceId)}`,
+      );
+      const { groupId } = (await res.json()) as { groupId: number };
+
+      const nsKey = `COORDINATION_RUNTIME_${groupId}` as keyof Env;
+      const ns =
+        (this.env[nsKey] as DurableObjectNamespace | undefined) ??
+        this.env.COORDINATION_RUNTIME;
+      this.cachedStub = ns.get(ns.idFromName(namespaceId));
+    } else {
+      this.cachedStub = this.env.COORDINATION_RUNTIME.get(
+        this.env.COORDINATION_RUNTIME.idFromName(namespaceId),
+      );
+    }
+
+    return this.cachedStub;
   }
 }

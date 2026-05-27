@@ -82,4 +82,52 @@ describe("CoordinationRuntimeDO", () => {
       expect(snap).toBeNull();
     });
   });
+
+  it("POST /coordinate without Authorization header returns 401 when tokenValidator configured", async () => {
+    const stub = env.COORDINATION_RUNTIME.get(
+      env.COORDINATION_RUNTIME.idFromName("coord-auth-test-no-token"),
+    );
+    await runInDurableObject(stub, async (instance) => {
+      const do_ = instance as unknown as CoordinationRuntimeDO;
+      do_.setTokenValidatorForTest("test-secret");
+      const res = await do_.fetch(new Request("http://x/coordinate", { method: "POST" }));
+      expect(res.status).toBe(401);
+    });
+  });
+
+  it("POST /coordinate with valid Bearer token returns 200", async () => {
+    // Construct token outside runInDurableObject to avoid async import issues
+    const { TokenValidator } = await import("./auth/token-validator.ts");
+    const v = new TokenValidator("test-secret");
+    const token = await v.sign("default", ["write"], 60_000);
+    const bearer = btoa(JSON.stringify(token));
+
+    const stub = env.COORDINATION_RUNTIME.get(
+      env.COORDINATION_RUNTIME.idFromName("coord-auth-test-valid-token"),
+    );
+    await runInDurableObject(stub, async (instance) => {
+      const do_ = instance as unknown as CoordinationRuntimeDO;
+      do_.setTokenValidatorForTest("test-secret");
+      const res = await do_.fetch(
+        new Request("http://x/coordinate", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${bearer}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            protocol: "LOCK",
+            protocolVersion: 1,
+            operation: "LOCK_ACQUIRE",
+            resourceKey: "auth-test-res",
+            payload: { ttl: 30_000 },
+            idempotencyKey: "idem-auth-1",
+            traceId: "trace-1",
+            clientId: "sdk",
+          }),
+        }),
+      );
+      expect(res.status).toBe(200);
+    });
+  });
 });

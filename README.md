@@ -897,27 +897,27 @@ Infrastructure systems earn trust by being honest about limitations. These are r
 - [x] Commit Coordinator (quorum ACK tracking)
 - [x] ReplicaDO (deterministic replication peer)
 - [x] Replication Manager (fan-out, health, gap-fill)
-- [ ] Lock Protocol executor
-- [ ] CoordinationRuntimeDO assembly
-- [ ] Replay Engine
-- [ ] Snapshot Manager
-- [ ] Recovery semantics (RECOVERING mode)
-- [ ] `quorum dev determinism-check`
-- [ ] SDK entry point (`quorum.lock()`)
+- [x] Lock Protocol executor
+- [x] CoordinationRuntimeDO assembly
+- [x] Replay Engine
+- [x] Snapshot Manager
+- [x] Recovery semantics (RECOVERING mode)
+- [x] `quorum dev determinism-check`
+- [x] SDK entry point (`quorum.lock()`)
 
 ### Phase 2 — Full Primitive Surface
 
-- [ ] Lease Protocol + heartbeat
-- [ ] Leader Election Protocol
-- [ ] QUORUM Flow (replayable workflows)
-- [ ] Full CLI (`quorum dev`, `quorum ops`)
-- [ ] Observability pipeline (metrics, OTEL tracing)
-- [ ] Security model (namespace tokens, encryption)
+- [x] Lease Protocol + heartbeat
+- [x] Leader Election Protocol
+- [x] QUORUM Flow (replayable workflows)
+- [x] Full CLI (`quorum dev`, `quorum ops`)
+- [x] Observability pipeline (metrics, OTEL tracing)
+- [x] Security model (namespace tokens, encryption)
 - [ ] Benchmark harness + initial results
 
 ### Phase 3 — Operational Excellence
 
-- [ ] Chaos engineering framework
+- [x] Chaos engineering framework
 - [ ] Dashboard (topology visualization, replay inspector)
 - [ ] Namespace partitioning (multi-group sharding)
 - [ ] Cost optimization tooling
@@ -955,7 +955,16 @@ Infrastructure systems earn trust by being honest about limitations. These are r
 | Document | Description |
 |---|---|
 | [System Design Specification](./docs/superpowers/specs/2026-05-25-quorum-design.md) | Full architecture doc — protocols, consistency model, recovery semantics, correctness properties, security, cost characteristics |
-| [Phase 1A Implementation Plan](./docs/superpowers/plans/2026-05-25-phase1a-rcl-replication.md) | Step-by-step TDD implementation plan for RCL Engine + Replication — **complete, 17/17 tests passing** |
+| [Phase 1A](./docs/superpowers/plans/2026-05-25-phase1a-rcl-replication.md) | RCL Engine + Replication — **complete, 17/17 tests** |
+| [Phase 1B](./docs/superpowers/plans/2026-05-26-phase1b-lock-do-assembly.md) | Lock Protocol + CoordinationRuntimeDO assembly — **complete, 41/41 tests** |
+| [Phase 1C-i](./docs/superpowers/plans/2026-05-26-phase1c-i-replay-snapshot-recovery.md) | Replay Engine + Snapshot Manager + Recovery — **complete, 57/57 tests** |
+| [Phase 1C-ii](./docs/superpowers/plans/2026-05-26-phase1c-ii-cli-sdk.md) | CLI (`quorum dev determinism-check`) + SDK (`quorum.lock()`) — **complete, 66/66 tests** |
+| [Phase 2A](./docs/superpowers/plans/2026-05-26-phase1b-lock-do-assembly.md) | Lease Protocol + Leader Election — **complete, 101/101 tests** |
+| [Phase 2B](./docs/superpowers/specs/2026-05-27-phase2b-workflow.md) | QUORUM Flow (replayable workflows) — **complete, 170/170 tests** |
+| [Phase 2C](./docs/superpowers/specs/2026-05-27-phase2c-full-cli.md) | Full CLI (`quorum ops topology`, `quorum dev replay`, etc.) — **complete** |
+| [Phase 2D](./docs/superpowers/specs/2026-05-27-phase2d-observability.md) | Observability pipeline (RclSubscriber, metrics, traces) — **complete** |
+| [Phase 2E](./docs/superpowers/specs/2026-05-27-phase2e-security.md) | Security model (namespace tokens, HMAC-SHA256) — **complete** |
+| [Phase 3](./docs/superpowers/plans/2026-05-27-phase3-chaos-engineering.md) | Chaos engineering (S1–S6 invariant validation under fault injection) — **complete, 198/198 tests** |
 | `docs/rfcs/` | Request for Comments — in-progress design proposals |
 | `docs/adrs/` | Architecture Decision Records — rationale for key decisions |
 
@@ -965,6 +974,6 @@ Infrastructure systems earn trust by being honest about limitations. These are r
 
 Built with the conviction that edge-native infrastructure should be as operationally rigorous as any production distributed system — not a simplified version of one.
 
-**[Design Spec](./docs/superpowers/specs/2026-05-25-quorum-design.md)** · **[Implementation Plan](./docs/superpowers/plans/2026-05-25-phase1a-rcl-replication.md)** · **[Open an Issue](https://github.com/ayushduttatreya/Quorum/issues)**
+**[Design Spec](./docs/superpowers/specs/2026-05-25-quorum-design.md)** · **[Chaos Engineering](./docs/superpowers/plans/2026-05-27-phase3-chaos-engineering.md)** · **[Open an Issue](https://github.com/ayushduttatreya/Quorum/issues)**
 
 </div>

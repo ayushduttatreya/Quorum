@@ -4,11 +4,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "chaos:eviction": "tsx src/leader-eviction.ts",
-    "chaos:partition": "tsx src/replica-partition.ts",
-    "chaos:corruption": "tsx src/snapshot-corruption.ts",
-    "chaos:epoch": "tsx src/split-epoch.ts"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
   },
-  "dependencies": { "@quorum/sdk": "*", "@quorum/types": "*" },
-  "devDependencies": { "tsx": "^4.0.0", "typescript": "*" }
+  "dependencies": {
+    "@quorum/sdk": "*",
+    "@quorum/types": "*",
+    "@quorum/runtime": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.5.0",
+    "@cloudflare/workers-types": "^4.0.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^3.60.0",
+    "typescript": "*"
+  }
 }

@@ -7,7 +7,8 @@
     "bench:lock": "tsx src/lock-latency.ts",
     "bench:quorum": "tsx src/quorum-commit.ts",
     "bench:replication": "tsx src/replication-lag.ts",
-    "bench:all": "npm run bench:lock && npm run bench:quorum && npm run bench:replication"
+    "bench:all": "tsx src/runner.ts",
+    "bench:runner": "tsx src/runner.ts"
   },
   "dependencies": { "@quorum/sdk": "*", "@quorum/types": "*" },
   "devDependencies": { "tsx": "^4.0.0", "typescript": "*" }

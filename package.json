@@ -1,7 +1,7 @@
 {
   "name": "quorum",
   "private": true,
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": ["packages/*", "apps/*", "benchmarks"],
   "scripts": {
     "build": "turbo build",
     "test": "turbo test",
